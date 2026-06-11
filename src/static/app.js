@@ -3,6 +3,12 @@ document.addEventListener("DOMContentLoaded", () => {
   const activitySelect = document.getElementById("activity");
   const signupForm = document.getElementById("signup-form");
   const messageDiv = document.getElementById("message");
+  const userButton = document.getElementById("user-button");
+  const logoutButton = document.getElementById("logout-button");
+  const loginModal = document.getElementById("login-modal");
+  const loginForm = document.getElementById("login-form");
+  const loginCancel = document.getElementById("login-cancel");
+  const loginError = document.getElementById("login-error");
 
   // Function to fetch activities from API
   async function fetchActivities() {
@@ -56,10 +62,12 @@ document.addEventListener("DOMContentLoaded", () => {
         activitySelect.appendChild(option);
       });
 
-      // Add event listeners to delete buttons
+      // Add event listeners to delete buttons (only visible to admins)
       document.querySelectorAll(".delete-btn").forEach((button) => {
         button.addEventListener("click", handleUnregister);
       });
+
+      updateUiForAuth();
     } catch (error) {
       activitiesList.innerHTML =
         "<p>Failed to load activities. Please try again later.</p>";
@@ -80,6 +88,7 @@ document.addEventListener("DOMContentLoaded", () => {
         )}/unregister?email=${encodeURIComponent(email)}`,
         {
           method: "DELETE",
+          headers: tokenHeader(),
         }
       );
 
@@ -124,6 +133,7 @@ document.addEventListener("DOMContentLoaded", () => {
         )}/signup?email=${encodeURIComponent(email)}`,
         {
           method: "POST",
+          headers: tokenHeader(),
         }
       );
 
@@ -155,6 +165,71 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  // Helper: return headers including admin token if present
+  function tokenHeader() {
+    const token = localStorage.getItem("admin_token");
+    return token ? { "X-Admin-Token": token } : {};
+  }
+
+  // Show/hide UI based on authentication
+  function updateUiForAuth() {
+    const token = localStorage.getItem("admin_token");
+    if (token) {
+      // Show delete buttons and hide signup form
+      document.querySelectorAll(".delete-btn").forEach((b) => (b.style.display = "inline-block"));
+      signupForm.style.display = "none";
+      userButton.classList.add("hidden");
+      logoutButton.classList.remove("hidden");
+    } else {
+      document.querySelectorAll(".delete-btn").forEach((b) => (b.style.display = "none"));
+      signupForm.style.display = "block";
+      userButton.classList.remove("hidden");
+      logoutButton.classList.add("hidden");
+    }
+  }
+
+  // Login modal handlers
+  userButton.addEventListener("click", () => {
+    loginModal.classList.remove("hidden");
+  });
+
+  loginCancel.addEventListener("click", () => {
+    loginModal.classList.add("hidden");
+    loginError.classList.add("hidden");
+  });
+
+  loginForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    loginError.classList.add("hidden");
+    const username = document.getElementById("login-username").value;
+    const password = document.getElementById("login-password").value;
+
+    try {
+      const resp = await fetch(`/admin/login?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`, {
+        method: "POST",
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        loginError.textContent = data.detail || "Login failed";
+        loginError.classList.remove("hidden");
+        return;
+      }
+
+      localStorage.setItem("admin_token", data.token);
+      loginModal.classList.add("hidden");
+      fetchActivities();
+    } catch (err) {
+      loginError.textContent = "Login failed";
+      loginError.classList.remove("hidden");
+    }
+  });
+
+  logoutButton.addEventListener("click", () => {
+    localStorage.removeItem("admin_token");
+    updateUiForAuth();
+  });
+
   // Initialize app
   fetchActivities();
+  updateUiForAuth();
 });

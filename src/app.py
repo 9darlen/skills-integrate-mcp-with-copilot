@@ -5,10 +5,13 @@ A super simple FastAPI application that allows students to view and sign up
 for extracurricular activities at Mergington High School.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 import os
+import json
+import hashlib
+import uuid
 from pathlib import Path
 
 app = FastAPI(title="Mergington High School API",
@@ -77,10 +80,40 @@ activities = {
     }
 }
 
+# Load teacher credentials
+teachers_file = current_dir / "teachers.json"
+teachers = {}
+if teachers_file.exists():
+    try:
+        with open(teachers_file, "r") as f:
+            data = json.load(f)
+            for t in data.get("teachers", []):
+                teachers[t["username"]] = t.get("password_sha256")
+    except Exception:
+        teachers = {}
+
+# In-memory admin sessions: token -> username
+admin_sessions = {}
+
 
 @app.get("/")
 def root():
     return RedirectResponse(url="/static/index.html")
+
+
+@app.post("/admin/login")
+def admin_login(username: str, password: str):
+    """Simple admin login that returns a short token on success"""
+    if username not in teachers:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    pw_hash = hashlib.sha256(password.encode("utf-8")).hexdigest()
+    if pw_hash != teachers.get(username):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    token = uuid.uuid4().hex
+    admin_sessions[token] = username
+    return {"token": token}
 
 
 @app.get("/activities")
@@ -89,7 +122,7 @@ def get_activities():
 
 
 @app.post("/activities/{activity_name}/signup")
-def signup_for_activity(activity_name: str, email: str):
+def signup_for_activity(activity_name: str, email: str, request: Request = None):
     """Sign up a student for an activity"""
     # Validate activity exists
     if activity_name not in activities:
@@ -105,13 +138,21 @@ def signup_for_activity(activity_name: str, email: str):
             detail="Student is already signed up"
         )
 
+    # Require admin token to perform signup (teachers only)
+    token = None
+    if request:
+        token = request.headers.get("X-Admin-Token")
+
+    if not token or token not in admin_sessions:
+        raise HTTPException(status_code=403, detail="Admin privileges required to sign up students")
+
     # Add student
     activity["participants"].append(email)
     return {"message": f"Signed up {email} for {activity_name}"}
 
 
 @app.delete("/activities/{activity_name}/unregister")
-def unregister_from_activity(activity_name: str, email: str):
+def unregister_from_activity(activity_name: str, email: str, request: Request = None):
     """Unregister a student from an activity"""
     # Validate activity exists
     if activity_name not in activities:
@@ -126,6 +167,14 @@ def unregister_from_activity(activity_name: str, email: str):
             status_code=400,
             detail="Student is not signed up for this activity"
         )
+
+    # Require admin token to perform unregister (teachers only)
+    token = None
+    if request:
+        token = request.headers.get("X-Admin-Token")
+
+    if not token or token not in admin_sessions:
+        raise HTTPException(status_code=403, detail="Admin privileges required to unregister students")
 
     # Remove student
     activity["participants"].remove(email)
